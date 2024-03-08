@@ -85,8 +85,11 @@ class SequenceAlignmentApp(QMainWindow):
             self.seq1 = self.seq1Input.text()
             self.seq2 = self.seq2Input.text()
             gapCost = float(self.gapCostInput.text())
+
+            # Parsing the substitution matrix from the text input
             matrixStr = self.subMatrixInput.toPlainText()
-            matrix = np.matrix(matrixStr.replace(';', '\n'))
+            matrixRows = matrixStr.split(';')
+            matrix = np.array([row.split() for row in matrixRows], dtype=float)
             self.costs = Costs(gap_cost=gapCost, matrix=matrix)
 
             inputsSummary = f"Sequence 1: {self.seq1}\nSequence 2: {self.seq2}\nGap Cost: {gapCost}\nSubstitution Matrix:\n{matrixStr}"
@@ -100,14 +103,13 @@ class SequenceAlignmentApp(QMainWindow):
             self.currentStepI = 0
             self.currentStepJ = 0
 
-            self.dpTableResults = np.full((len(self.seq1) + 1, len(self.seq2) + 1), np.inf)
+            self.dpTableResults = np.full((len(self.seq1) + 1, len(self.seq2) + 1), np.NaN)
             self.dpTableResults[0, :] = np.arange(len(self.seq2) + 1) * self.costs.gap_cost
             self.dpTableResults[:, 0] = np.arange(len(self.seq1) + 1) * self.costs.gap_cost
             for i in range(len(self.seq1) + 1):
                 for j in range(len(self.seq2) + 1):
                     self.dpTable.setItem(i, j, QTableWidgetItem(str(self.dpTableResults[i, j])))
             self.currentStepI, self.currentStepJ = 1, 0  # Start from the first cell after initialized edges
-
         except Exception as e:
             print(f"Error in startAlignment: {e}")
 
@@ -122,18 +124,18 @@ class SequenceAlignmentApp(QMainWindow):
                     match_mismatch = self.dpTableResults[self.currentStepI - 1, self.currentStepJ - 1] + match_mismatch_cost
                     delete = self.dpTableResults[self.currentStepI - 1, self.currentStepJ] + self.costs.gap_cost
                     insert = self.dpTableResults[self.currentStepI, self.currentStepJ - 1] + self.costs.gap_cost
-                    min_cost = min(match_mismatch, delete, insert)
-                    self.dpTableResults[self.currentStepI, self.currentStepJ] = min_cost
+                    max_cost = max(match_mismatch, delete, insert)
+                    self.dpTableResults[self.currentStepI, self.currentStepJ] = max_cost
 
                     # Construct the explanation based on which option was chosen
-                    if min_cost == match_mismatch:
+                    if max_cost == match_mismatch:
                         explanation = f"Match/mismatch between {self.seq1[self.currentStepI - 1]} and {self.seq2[self.currentStepJ - 1]}. Cost: {match_mismatch_cost}."
-                    elif min_cost == delete:
+                    elif max_cost == delete:
                         explanation = "Deletion. Using gap cost."
-                    elif min_cost == insert:
+                    elif max_cost == insert:
                         explanation = "Insertion. Using gap cost."
 
-                    self.dpTable.setItem(self.currentStepI, self.currentStepJ, QTableWidgetItem(str(min_cost)))
+                    self.dpTable.setItem(self.currentStepI, self.currentStepJ, QTableWidgetItem(str(max_cost)))
                 else:
                     # Handling the initial row and column where only gaps can occur
                     if self.currentStepI == 0 or self.currentStepJ == 0:
@@ -143,6 +145,7 @@ class SequenceAlignmentApp(QMainWindow):
 
                 # Move to the next cell logic remains the same
                 self.currentStepJ += 1
+
                 if self.currentStepJ == len(self.seq2) + 1:
                     self.currentStepJ = 0
                     self.currentStepI += 1
@@ -157,14 +160,17 @@ class SequenceAlignmentApp(QMainWindow):
         try:
             index_2 = self.costs.base_to_index[base_2]
             index_1 = self.costs.base_to_index[base_1]
-            return self.costs.matrix[index_1, index_2]
+            cost = self.costs.matrix[index_1, index_2]
+            return cost
         except Exception as e:
             print(f"Error in calculateStepCost: {e}")
+            return 0.0  # Return a default value to avoid NoneType issues
 
     def updateExplanation(self, i, j):
         # Update the UI with an explanation of how the current cell's value was calculated
         explanation = f"Calculating cell [{i + 1}, {j + 1}]: ..."
         # TODO - Display this explanation somewhere in the UI that makes sense...
+
     def createOrUpdateDPTable(self, seq1, seq2):
         rows, cols = len(seq1) + 1, len(seq2) + 1
         if self.dpTable:
