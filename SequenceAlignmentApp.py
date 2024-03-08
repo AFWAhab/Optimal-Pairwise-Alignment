@@ -3,12 +3,14 @@ import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QLabel, QTableWidget,
                              QTableWidgetItem, QLineEdit, QHBoxLayout, QTextEdit, QGridLayout, QFrame)
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor
 
 class Costs:
     def __init__(self, gap_cost, matrix):
         self.matrix = matrix
         self.gap_cost = gap_cost
         self.base_to_index = {'A': 0, 'C': 1, 'G': 2, 'T': 3}
+        self.history = [] # Initialize a history stack
 
 class SequenceAlignmentApp(QMainWindow):
     def __init__(self):
@@ -25,6 +27,12 @@ class SequenceAlignmentApp(QMainWindow):
         # UI components
         self.setupUI()
 
+        # Automatically set default input values for testing
+        self.seq1Input.setText("TCCAGAGA")
+        self.seq2Input.setText("TCGAT")
+        self.gapCostInput.setText("-5")
+        self.subMatrixInput.setPlainText("10 2 5 2; 2 10 2 5; 5 2 10 2; 2 5 2 10")
+
     def setupUI(self):
         # Input layout
         self.inputLayout = QVBoxLayout()
@@ -36,6 +44,12 @@ class SequenceAlignmentApp(QMainWindow):
         self.gapCostInput = QLineEdit(self)
         self.subMatrixInput = QTextEdit(self)
         self.subMatrixInput.setPlaceholderText("10 2 5 2; 2 10 2 5; 5 2 10 2; 2 5 2 10")
+
+        # Step back button
+        self.goBackButton = QPushButton("Go Back", self)
+        self.goBackButton.clicked.connect(self.goBackStep)
+        self.goBackButton.setEnabled(True)  # Initially disabled
+        self.matrixInputLayout.addWidget(self.goBackButton)
 
         # Start button
         self.startButton = QPushButton("Start", self)
@@ -80,6 +94,52 @@ class SequenceAlignmentApp(QMainWindow):
         # Placeholder for DP table setup
         self.dpTable = None
 
+    def goBackStep(self):
+        if self.history:
+            # Remove the last entry from the history to get the indices and value before the last change
+            i, j, prev_value = self.history.pop()
+
+            # Restore the previous value of the cell
+            self.dpTableResults[i, j] = prev_value
+            self.dpTable.setItem(i, j, QTableWidgetItem(str(prev_value)))
+
+            # Enable the "Next Step" button again if it was disabled
+            self.nextStepButton.setEnabled(True)
+
+            # If the history is now empty, disable the "Go Back" button
+            if not self.history:
+                self.goBackButton.setEnabled(False)
+
+            # Adjust currentStepI and currentStepJ to point to the previous step
+            if self.currentStepJ == 0:
+                self.currentStepI -= 1
+                self.currentStepJ = len(self.seq2)  # Assuming seq2 is the horizontal sequence
+            else:
+                self.currentStepJ -= 1
+
+            # Highlight the cell that is now the current step
+            self.highlightCell(self.currentStepI, self.currentStepJ)
+
+            # Update the explanation to reflect the step we've gone back to
+            if self.currentStepI == 0 or self.currentStepJ == 0:
+                self.explanationDisplay.setText("This is the start of a row or column, initialized with gap costs.")
+            else:
+                self.explanationDisplay.setText("Ready to calculate this cell.")
+
+            # Since we have moved back a step, we need to re-enable the "Go Back" button if there are more steps to undo
+            if self.history:
+                self.goBackButton.setEnabled(True)
+            else:
+                self.goBackButton.setEnabled(False)
+    def highlightCell(self, i, j):
+        # Reset all cell backgrounds to default
+        for row in range(self.dpTable.rowCount()):
+            for col in range(self.dpTable.columnCount()):
+                self.dpTable.item(row, col).setBackground(QColor(255, 255, 255))
+        # Highlight the current cell
+        if i < self.dpTable.rowCount() and j < self.dpTable.columnCount():
+            self.dpTable.item(i, j).setBackground(QColor(255, 255, 0))  # Yellow
+
     def startAlignment(self):
         try:
             self.seq1 = self.seq1Input.text()
@@ -98,8 +158,6 @@ class SequenceAlignmentApp(QMainWindow):
             self.createOrUpdateDPTable(self.seq1, self.seq2)
             self.nextStepButton.setEnabled(True)  # Enable the "Next Step" button after starting
 
-            # Initialize or reset the alignment process state
-            # Placeholder: set current step indices to start of the table
             self.currentStepI = 0
             self.currentStepJ = 0
 
@@ -110,6 +168,7 @@ class SequenceAlignmentApp(QMainWindow):
                 for j in range(len(self.seq2) + 1):
                     self.dpTable.setItem(i, j, QTableWidgetItem(str(self.dpTableResults[i, j])))
             self.currentStepI, self.currentStepJ = 1, 0  # Start from the first cell after initialized edges
+            self.history = []  # Reset the history stack when starting a new alignment
         except Exception as e:
             print(f"Error in startAlignment: {e}")
 
@@ -125,6 +184,11 @@ class SequenceAlignmentApp(QMainWindow):
                     delete = self.dpTableResults[self.currentStepI - 1, self.currentStepJ] + self.costs.gap_cost
                     insert = self.dpTableResults[self.currentStepI, self.currentStepJ - 1] + self.costs.gap_cost
                     max_cost = max(match_mismatch, delete, insert)
+
+                    # Before we update the table, we need to store the current state in the history stack
+                    prev_value = self.dpTableResults[self.currentStepI, self.currentStepJ]
+                    self.history.append((self.currentStepI, self.currentStepJ, prev_value))
+
                     self.dpTableResults[self.currentStepI, self.currentStepJ] = max_cost
 
                     # Construct the explanation based on which option was chosen
@@ -136,14 +200,14 @@ class SequenceAlignmentApp(QMainWindow):
                         explanation = "Insertion. Using gap cost."
 
                     self.dpTable.setItem(self.currentStepI, self.currentStepJ, QTableWidgetItem(str(max_cost)))
+                    self.highlightCell(self.currentStepI, self.currentStepJ)
+
                 else:
                     # Handling the initial row and column where only gaps can occur
                     if self.currentStepI == 0 or self.currentStepJ == 0:
                         explanation = "Starting row/column, using gap costs."
 
                 self.explanationDisplay.setText(explanation)  # Update the explanation display
-
-                # Move to the next cell logic remains the same
                 self.currentStepJ += 1
 
                 if self.currentStepJ == len(self.seq2) + 1:
