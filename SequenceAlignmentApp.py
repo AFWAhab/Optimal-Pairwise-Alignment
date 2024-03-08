@@ -45,6 +45,12 @@ class SequenceAlignmentApp(QMainWindow):
         self.subMatrixInput = QTextEdit(self)
         self.subMatrixInput.setPlaceholderText("10 2 5 2; 2 10 2 5; 5 2 10 2; 2 5 2 10")
 
+        # Finish button, if a user does not want to see all the steps, they should be able to just click this and finish the alignment
+        self.finishButton = QPushButton("Finish All Score Steps", self)
+        self.finishButton.clicked.connect(self.finishAlignment)
+        self.finishButton.setEnabled(False)  # Disabled until "Start" is pressed
+        self.matrixInputLayout.addWidget(self.finishButton)
+
         # Step back button
         self.goBackButton = QPushButton("Go Back", self)
         self.goBackButton.clicked.connect(self.goBackStep)
@@ -140,6 +146,34 @@ class SequenceAlignmentApp(QMainWindow):
         if i < self.dpTable.rowCount() and j < self.dpTable.columnCount():
             self.dpTable.item(i, j).setBackground(QColor(255, 255, 0))  # Yellow
 
+    def finishAlignment(self):
+        try:
+            for i in range(1, len(self.seq1) + 1):
+                for j in range(1, len(self.seq2) + 1):
+                    match_mismatch_cost = self.calculateStepCost(self.seq1[i - 1], self.seq2[j - 1])
+                    match_mismatch = self.dpTableResults[i - 1, j - 1] + match_mismatch_cost
+                    delete = self.dpTableResults[i - 1, j] + self.costs.gap_cost
+                    insert = self.dpTableResults[i, j - 1] + self.costs.gap_cost
+
+                    # Choose the best cost and update the DP table
+                    self.dpTableResults[i, j] = max(match_mismatch, delete, insert)
+
+                    # Update the table widget item directly without intermediate steps
+                    self.dpTable.setItem(i, j, QTableWidgetItem(str(self.dpTableResults[i, j])))
+
+            # Highlight the final score cell in the bottom-right corner
+            self.highlightCell(len(self.seq1), len(self.seq2))
+
+            # Update explanation for the completion
+            self.explanationDisplay.setText(
+                "Alignment completed. Final score is shown in the bottom-right corner of the table.")
+
+            # Disable the Next Step and Finish buttons as the calculation is complete
+            self.nextStepButton.setEnabled(False)
+            self.finishButton.setEnabled(False)
+        except Exception as e:
+            print(f"Error in finishAlignment: {e}")
+
     def startAlignment(self):
         try:
             self.seq1 = self.seq1Input.text()
@@ -169,6 +203,7 @@ class SequenceAlignmentApp(QMainWindow):
                     self.dpTable.setItem(i, j, QTableWidgetItem(str(self.dpTableResults[i, j])))
             self.currentStepI, self.currentStepJ = 1, 0  # Start from the first cell after initialized edges
             self.history = []  # Reset the history stack when starting a new alignment
+            self.finishButton.setEnabled(True)
         except Exception as e:
             print(f"Error in startAlignment: {e}")
 
