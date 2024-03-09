@@ -3,7 +3,8 @@ import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QLabel, QTableWidget,
                              QTableWidgetItem, QLineEdit, QHBoxLayout, QTextEdit, QGridLayout, QFrame)
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor, QTextCursor
+
 
 class Costs:
     def __init__(self, gap_cost, matrix):
@@ -45,6 +46,13 @@ class SequenceAlignmentApp(QMainWindow):
         self.subMatrixInput = QTextEdit(self)
         self.subMatrixInput.setPlaceholderText("10 2 5 2; 2 10 2 5; 5 2 10 2; 2 5 2 10")
 
+
+        self.backtrackButton = QPushButton("Backtrack", self)
+        self.backtrackButton.clicked.connect(self.startBacktracking)
+        self.backtrackButton.setEnabled(False)  # Enable only after alignment is complete
+
+        self.matrixInputLayout.addWidget(self.backtrackButton)
+
         # Finish button, if a user does not want to see all the steps, they should be able to just click this and finish the alignment
         self.finishButton = QPushButton("Finish All Score Steps", self)
         self.finishButton.clicked.connect(self.finishAlignment)
@@ -83,6 +91,10 @@ class SequenceAlignmentApp(QMainWindow):
         self.matrixInputLayout.addWidget(self.startButton)
         self.matrixInputLayout.addWidget(self.nextStepButton)
 
+        self.alignmentTextEdit = QTextEdit(self)
+        self.alignmentTextEdit.setReadOnly(True)
+        self.gridLayout.addWidget(self.alignmentTextEdit, 5, 0, 1, 3)
+
         # Combine input layouts into the grid
         self.gridLayout.addLayout(self.inputLayout, 0, 0, 1, 1)
         self.gridLayout.addLayout(self.matrixInputLayout, 0, 1, 1, 2)
@@ -101,7 +113,17 @@ class SequenceAlignmentApp(QMainWindow):
         self.dpTable = None
 
     def goBackStep(self):
-        if self.history:
+        if not self.history:
+            return
+
+        last_action = self.history.pop()
+        if last_action[0] == 'backtrack':
+            # If we're undoing a backtrack step, disable Next Step and enable Backtrack if necessary
+            self.nextStepButton.setEnabled(False)
+            self.backtrackButton.setEnabled(True)
+            _, self.currentStepI, self.currentStepJ = last_action
+            self.updateBacktrackStep()
+        else:
             # Remove the last entry from the history to get the indices and value before the last change
             i, j, prev_value = self.history.pop()
 
@@ -137,6 +159,7 @@ class SequenceAlignmentApp(QMainWindow):
                 self.goBackButton.setEnabled(True)
             else:
                 self.goBackButton.setEnabled(False)
+            pass
     def highlightCell(self, i, j):
         # Reset all cell backgrounds to default
         for row in range(self.dpTable.rowCount()):
@@ -145,6 +168,62 @@ class SequenceAlignmentApp(QMainWindow):
         # Highlight the current cell
         if i < self.dpTable.rowCount() and j < self.dpTable.columnCount():
             self.dpTable.item(i, j).setBackground(QColor(255, 255, 0))  # Yellow
+
+    def startBacktracking(self):
+        # Initialization for backtracking
+        self.currentStepI, self.currentStepJ = len(self.seq1), len(self.seq2)
+        self.isBacktracking = True  # Indicate that backtracking has started
+        self.backtrackButton.setEnabled(False)  # No longer needed once backtracking starts
+        self.nextStepButton.setEnabled(True)  # Reuse this button for backtracking steps
+        self.updateBacktrackStep()  # Begin backtracking
+
+    def updateBacktrackStep(self):
+        if self.currentStepI == 0 and self.currentStepJ == 0:
+            self.nextStepButton.setEnabled(False)  # Disable if backtracking is complete
+            self.explanationDisplay.setText("Backtracking complete. Optimal alignment found.")
+            return
+        direction, explanation = self.determineBacktrackStep(self.currentStepI, self.currentStepJ)
+        self.explanationDisplay.setText(explanation)
+        self.highlightCell(self.currentStepI, self.currentStepJ)
+        self.updateAlignmentText()  # Update alignment text with the current step
+
+        # Move in the direction determined by determineBacktrackStep
+        if direction == 'diagonal':
+            self.currentStepI -= 1
+            self.currentStepJ -= 1
+        elif direction == 'up':
+            self.currentStepI -= 1
+        elif direction == 'left':
+            self.currentStepJ -= 1
+
+        # After updating the indices, we add the step to the history for backtracking
+        self.history.append(('backtrack', self.currentStepI, self.currentStepJ))
+    def determineBacktrackStep(self, i, j):
+        # Determine the direction of the backtrack step (diagonal, up, left)
+        if i == 0:
+            return 'left', "Moving left (insertion)."
+        if j == 0:
+            return 'up', "Moving up (deletion)."
+
+        diag = self.dpTableResults[i - 1, j - 1]
+        up = self.dpTableResults[i - 1, j]
+        left = self.dpTableResults[i, j - 1]
+        current = self.dpTableResults[i, j]
+
+        if current - diag == self.calculateStepCost(self.seq1[i - 1], self.seq2[j - 1]):
+            return 'diagonal', f"Diagonal move: matching {self.seq1[i - 1]} with {self.seq2[j - 1]}."
+        elif current - up == self.costs.gap_cost:
+            return 'up', "Moving up: gap in sequence 2."
+        elif current - left == self.costs.gap_cost:
+            return 'left', "Moving left: gap in sequence 1."
+
+    def updateAlignmentText(self):
+        # Append the aligned characters to the alignment text field
+        char1 = self.seq1[self.currentStepI - 1] if self.currentStepI > 0 else '-'  # If at the start, use gap symbol
+        char2 = self.seq2[self.currentStepJ - 1] if self.currentStepJ > 0 else '-'  # If at the start, use gap symbol
+        current_alignment = f"{char1} {char2}\n"
+        self.alignmentTextEdit.moveCursor(QTextCursor.End)
+        self.alignmentTextEdit.insertPlainText(current_alignment)
 
     def finishAlignment(self):
         try:
@@ -171,6 +250,8 @@ class SequenceAlignmentApp(QMainWindow):
             # Disable the Next Step and Finish buttons as the calculation is complete
             self.nextStepButton.setEnabled(False)
             self.finishButton.setEnabled(False)
+            self.isBacktracking = False  # Ensure backtracking mode is off until explicitly started
+            self.backtrackButton.setEnabled(True)  # Enable backtracking once alignment is complete
         except Exception as e:
             print(f"Error in finishAlignment: {e}")
 
@@ -209,49 +290,53 @@ class SequenceAlignmentApp(QMainWindow):
 
     def nextAlignmentStep(self):
         try:
-            if self.currentStepI < len(self.seq1) + 1 and self.currentStepJ < len(self.seq2) + 1:
-                explanation = ""
-                if self.currentStepI > 0 and self.currentStepJ > 0:
-                    # Calculate costs for match/mismatch, insertion, and deletion
-                    match_mismatch_cost = self.calculateStepCost(self.seq1[self.currentStepI - 1],
-                                                                 self.seq2[self.currentStepJ - 1])
-                    match_mismatch = self.dpTableResults[self.currentStepI - 1, self.currentStepJ - 1] + match_mismatch_cost
-                    delete = self.dpTableResults[self.currentStepI - 1, self.currentStepJ] + self.costs.gap_cost
-                    insert = self.dpTableResults[self.currentStepI, self.currentStepJ - 1] + self.costs.gap_cost
-                    max_cost = max(match_mismatch, delete, insert)
-
-                    # Before we update the table, we need to store the current state in the history stack
-                    prev_value = self.dpTableResults[self.currentStepI, self.currentStepJ]
-                    self.history.append((self.currentStepI, self.currentStepJ, prev_value))
-
-                    self.dpTableResults[self.currentStepI, self.currentStepJ] = max_cost
-
-                    # Construct the explanation based on which option was chosen
-                    if max_cost == match_mismatch:
-                        explanation = f"Match/mismatch between {self.seq1[self.currentStepI - 1]} and {self.seq2[self.currentStepJ - 1]}. Cost: {match_mismatch_cost}."
-                    elif max_cost == delete:
-                        explanation = "Deletion. Using gap cost."
-                    elif max_cost == insert:
-                        explanation = "Insertion. Using gap cost."
-
-                    self.dpTable.setItem(self.currentStepI, self.currentStepJ, QTableWidgetItem(str(max_cost)))
-                    self.highlightCell(self.currentStepI, self.currentStepJ)
-
-                else:
-                    # Handling the initial row and column where only gaps can occur
-                    if self.currentStepI == 0 or self.currentStepJ == 0:
-                        explanation = "Starting row/column, using gap costs."
-
-                self.explanationDisplay.setText(explanation)  # Update the explanation display
-                self.currentStepJ += 1
-
-                if self.currentStepJ == len(self.seq2) + 1:
-                    self.currentStepJ = 0
-                    self.currentStepI += 1
-                if self.currentStepI == len(self.seq1) + 1:
-                    self.nextStepButton.setEnabled(False)  # Disable the button if finished
+            if self.isBacktracking:
+                # Handle backtracking steps
+                self.updateBacktrackStep()
             else:
-                self.nextStepButton.setEnabled(False)  # Disable the button if finished
+                if self.currentStepI < len(self.seq1) + 1 and self.currentStepJ < len(self.seq2) + 1:
+                    explanation = ""
+                    if self.currentStepI > 0 and self.currentStepJ > 0:
+                        # Calculate costs for match/mismatch, insertion, and deletion
+                        match_mismatch_cost = self.calculateStepCost(self.seq1[self.currentStepI - 1],
+                                                                     self.seq2[self.currentStepJ - 1])
+                        match_mismatch = self.dpTableResults[self.currentStepI - 1, self.currentStepJ - 1] + match_mismatch_cost
+                        delete = self.dpTableResults[self.currentStepI - 1, self.currentStepJ] + self.costs.gap_cost
+                        insert = self.dpTableResults[self.currentStepI, self.currentStepJ - 1] + self.costs.gap_cost
+                        max_cost = max(match_mismatch, delete, insert)
+
+                        # Before we update the table, we need to store the current state in the history stack
+                        prev_value = self.dpTableResults[self.currentStepI, self.currentStepJ]
+                        self.history.append((self.currentStepI, self.currentStepJ, prev_value))
+
+                        self.dpTableResults[self.currentStepI, self.currentStepJ] = max_cost
+
+                        # Construct the explanation based on which option was chosen
+                        if max_cost == match_mismatch:
+                            explanation = f"Match/mismatch between {self.seq1[self.currentStepI - 1]} and {self.seq2[self.currentStepJ - 1]}. Cost: {match_mismatch_cost}."
+                        elif max_cost == delete:
+                            explanation = "Deletion. Using gap cost."
+                        elif max_cost == insert:
+                            explanation = "Insertion. Using gap cost."
+
+                        self.dpTable.setItem(self.currentStepI, self.currentStepJ, QTableWidgetItem(str(max_cost)))
+                        self.highlightCell(self.currentStepI, self.currentStepJ)
+
+                    else:
+                        # Handling the initial row and column where only gaps can occur
+                        if self.currentStepI == 0 or self.currentStepJ == 0:
+                            explanation = "Starting row/column, using gap costs."
+
+                    self.explanationDisplay.setText(explanation)  # Update the explanation display
+                    self.currentStepJ += 1
+
+                    if self.currentStepJ == len(self.seq2) + 1:
+                        self.currentStepJ = 0
+                        self.currentStepI += 1
+                    if self.currentStepI == len(self.seq1) + 1:
+                        self.nextStepButton.setEnabled(False)  # Disable the button if finished
+                else:
+                    self.nextStepButton.setEnabled(False)  # Disable the button if finished
         except Exception as e:
             print(f"Error in nextAlignmentStep: {e}")
 
