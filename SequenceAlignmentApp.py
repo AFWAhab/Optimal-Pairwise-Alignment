@@ -350,11 +350,6 @@ class SequenceAlignmentApp(QMainWindow):
             print(f"Error in calculateStepCost: {e}")
             return 0.0  # Return a default value to avoid NoneType issues
 
-    def updateExplanation(self, i, j):
-        # Update the UI with an explanation of how the current cell's value was calculated
-        explanation = f"Calculating cell [{i + 1}, {j + 1}]: ..."
-        # TODO - Display this explanation somewhere in the UI that makes sense...
-
     def createOrUpdateDPTable(self, seq1, seq2):
         rows, cols = len(seq1) + 1, len(seq2) + 1
         if self.dpTable:
